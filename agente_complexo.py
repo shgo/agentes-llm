@@ -1,0 +1,220 @@
+import os
+from typing import Literal
+
+from langchain_openai import ChatOpenAI
+from openai import OpenAI
+from langgraph.graph import StateGraph, START
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.graph import MessagesState, END
+from langgraph.types import Command
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
+from tools import duckduckgo_tool, python_repl_tool, print_pretty
+
+TOKEN = os.environ["GITHUB_TOKEN"]
+ENDPOINT = "https://models.github.ai/inference"
+MODEL = "openai/gpt-4.1"
+
+llm = ChatOpenAI(
+    model=MODEL,
+    base_url=ENDPOINT,
+    api_key=TOKEN,
+)
+
+
+## System prompt
+def make_system_prompt(suffix: str) -> str:
+    return (
+        "You are a helpful AI assistant, collaborating with other assistants."
+        " Use the provided tools to progress towards answering the question."
+        " If you are unable to fully answer, that's OK, another assistant with different tools "
+        " will help where you left off. Execute what you can to make progress."
+        " If you or any of the other assistants have the final answer or deliverable,"
+        " prefix your response with FINAL ANSWER so the team knows to stop."
+        f"\n{suffix}"
+    )
+
+
+## Agents
+research_agent = create_react_agent(
+    llm,
+    tools=[duckduckgo_tool],
+    prompt=make_system_prompt(
+        "You can only do research. You are working with a chart generator colleague."
+    ),
+)
+
+# Chart generator agent
+# NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION, WHICH CAN BE UNSAFE WHEN NOT SANDBOXED
+chart_task = """Create clear and visually appealing charts using seaborn and plotly. Follow these rules:
+1. Add a title, labeled axes (with units), and a legend if needed.
+2. Use `sns.set_context("notebook")` for readable text and themes like `sns.set_theme()` or `sns.set_style("whitegrid")`.
+3. Use accessible color palettes like `sns.color_palette("husl")`.
+4. Choose appropriate plots: `sns.lineplot()`, `sns.barplot()`, or `sns.heatmap()`.
+5. Annotate key points (e.g., "Peak in 2020") for clarity.
+6. Ensure the chart's width and display resolution is no wider than 1000px.
+7. Display with `plt.show()`.
+8. Save in the current directory with `plt.savefig(appropriate_name.pdf)`
+Goal: Produce accurate, engaging, and easy-to-interpret charts."""
+chart_agent = create_react_agent(
+    llm,
+    [python_repl_tool],
+    prompt=make_system_prompt(chart_task),
+)
+
+
+## State Graph Nodes
+def get_next_node(last_message: BaseMessage, goto: str):
+    print("get next node")
+    if "FINAL ANSWER" in last_message.content:
+        # Any agent decided the work is done
+        return END
+    return goto
+
+
+def tool_node(state):
+    """This runs tools in the graph It takes in an agent action and calls that tool and returns the result."""
+    messages = state["messages"]
+    # Based on the continue condition
+    # we know the last message involves a function call
+    last_message = messages[-1]
+    # We construct an ToolInvocation from the function_call
+    tool_input = json.loads(
+        last_message.additional_kwargs["function_call"]["arguments"]
+    )
+    # We can pass single-arg inputs by value
+    if len(tool_input) == 1 and "__arg1" in tool_input:
+        tool_input = next(iter(tool_input.values()))
+    tool_name = last_message.additional_kwargs["function_call"]["name"]
+    print(f"Invocando tool {tool_name}: {tool_input}")
+    action = ToolInvocation(
+        tool=tool_name,
+        tool_input=tool_input,
+    )
+    # We call the tool_executor and get back a response
+    response = tool_executor.invoke(action)
+    # We use the response to create a FunctionMessage
+    function_message = FunctionMessage(
+        content=f"{tool_name} response: {str(response)}", name=action.tool
+    )
+    # We return a list, because this will get added to the existing list
+    # return {"messages": [function_message]}
+    return Command(
+        update={
+            "messages": [function_message],
+        },
+        goto=goto,
+    )
+
+
+def research_node(
+    state: MessagesState,
+) -> Command[Literal["chart_generator", END]]:
+    print("Invocando busca")
+    result = research_agent.invoke(state)
+    goto = get_next_node(result["messages"][-1], "chart_generator")
+    # wrap in a human message, as not all providers allow
+    # AI message at the last position of the input messages list
+    result["messages"][-1] = HumanMessage(
+        content=result["messages"][-1].content, name="researcher"
+    )
+    print(result)
+    return Command(
+        update={
+            # share internal message history of research agent with other agents
+            "messages": result["messages"],
+        },
+        goto=goto,
+    )
+
+
+def chart_node(state: MessagesState) -> Command[Literal["researcher", END]]:
+    print("Invocando chart")
+    result = chart_agent.invoke(state)
+    goto = get_next_node(result["messages"][-1], "researcher")
+    # wrap in a human message, as not all providers allow
+    # AI message at the last position of the input messages list
+    result["messages"][-1] = HumanMessage(
+        content=result["messages"][-1].content, name="chart_generator"
+    )
+    print(result)
+    return Command(
+        update={
+            # share internal message history of chart agent with other agents
+            "messages": result["messages"],
+        },
+        goto=goto,
+    )
+
+
+# Either agent can decide to end
+def router(state):
+    # This is the router
+    messages = state["messages"]
+    last_message = messages[-1]
+    if "function_call" in last_message.additional_kwargs:
+        # The previus agent is invoking a tool
+        return "call_tool"
+    if "FINAL ANSWER" in last_message.content:
+        # Any agent decided the work is done
+        return "end"
+    return "continue"
+
+
+def main(user_query: str, display: bool = True):
+    workflow = StateGraph(MessagesState)
+    # nodes
+    workflow.add_node("researcher", research_node)
+    workflow.add_node("chart_generator", chart_node)
+    workflow.add_node("call_tool", tool_node)
+    # edges
+    workflow.add_edge(START, "researcher")
+    workflow.add_conditional_edges(
+        "chart_generator",
+        router,
+        {"continue": "researcher", "call_tool": "call_tool", "end": END},
+    )
+    workflow.add_conditional_edges(
+        "call_tool",
+        # Each agent node updates the 'sender' field# the tool calling node does not, meaning
+        # this edge will route back to the original agent# who invoked the tool
+        lambda x: x["sender"],
+        {
+            "researcher": "researcher",
+            "chart_generator": "chart_generator",
+        },
+    )
+    workflow.set_entry_point("researcher")
+
+    graph = workflow.compile()
+    if display:
+        #from IPython.display import Image, display
+
+        try:
+            graph.get_graph().draw_mermaid_png(output_file_path="/home/churros/codes/agentes/grafo.png")
+            #display(Image(graph.get_graph().draw_mermaid_png()))
+        except Exception:
+            # This requires some extra dependencies and is optional
+            pass
+
+    # Invocando o grafo de estados
+    print("Agora vai!")
+    events = graph.stream(
+        {
+            "messages": [("user", user_query)],
+        },
+        # Maximum number of steps to take in the graph
+        {"recursion_limit": 10},
+    )
+    for s in events:
+        print_pretty(s)
+        print("----")
+
+
+if __name__ == "__main__":
+    user_query = (
+        "First, get Brazil's GDP over the past 5 years, then make a line chart of it. "
+        "Once you make the chart, finish."
+    )
+
+    main(user_query)
