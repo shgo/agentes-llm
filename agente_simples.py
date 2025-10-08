@@ -6,7 +6,7 @@ from tools import print_pretty
 
 TOKEN = os.environ["GITHUB_TOKEN"]
 ENDPOINT = "https://models.github.ai/inference"
-MODEL = "openai/gpt-4.1"
+MODEL = "openai/gpt-5-mini"
 
 
 def basic_assistant(question: str = "Existe PUC em Campinas?"):
@@ -33,4 +33,4 @@ def basic_assistant(question: str = "Existe PUC em Campinas?"):
 
 
 if __name__ == "__main__":
-    basic_assistant()
+    basic_assistant("Qual a universidade mais antiga do Brasil?")

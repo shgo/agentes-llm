@@ -35,11 +35,12 @@ def print_pretty(event):
         event (dict): The event containing messages from the research or chart node.
     """
     # Check if the event contains 'research_node' or 'chart_node'
-    for node_key in ["research_node", "chart_node"]:
+    for node_key in ["researcher", "chart_generator"]:
         if node_key in event:
             messages = event[node_key].get("messages", [])
             print(f"{node_key}: [")
             for message in messages:
+                print(message)
                 # Extract message type (HumanMessage, AIMessage, etc.)
                 message_type = message.__class__.__name__
                 content = message.content

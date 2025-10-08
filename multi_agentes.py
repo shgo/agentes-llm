@@ -13,7 +13,7 @@ from prompts import make_system_prompt, chart_task
 
 TOKEN = os.environ["GITHUB_TOKEN"]
 ENDPOINT = "https://models.github.ai/inference"
-MODEL = "openai/gpt-4.1"
+MODEL = "openai/gpt-5-mini"
 
 ## Defino o meu llm
 llm = ChatOpenAI(
@@ -22,14 +22,13 @@ llm = ChatOpenAI(
     api_key=TOKEN,
 )
 
-
 ## Agentes
 research_agent = create_react_agent(
     llm,
-    # tools=[duckduckgo_tool],
-    tools=[tavily_tool],
+    tools=[duckduckgo_tool],
+    # tools=[tavily_tool],
     prompt=make_system_prompt(
-        "You can only do research. You are working with a chart generator colleague."
+        "Você é um agente que realiza apenas pesquisa. Você está trabalhando com um colega que gera gráficos."
     ),
 )
 
@@ -43,12 +42,40 @@ chart_agent = create_react_agent(
 
 
 ## State Graph Nodes
-def get_next_node(last_message: BaseMessage, goto: str):
-    print("get next node")
-    if "FINAL ANSWER" in last_message.content:
-        # Any agent decided the work is done
-        return END
-    return goto
+def research_node(
+    state: MessagesState,
+) -> Command[Literal["chart_generator", END]]:
+    result = research_agent.invoke(state)
+    goto = get_next_node(result["messages"][-1], "chart_generator")
+    # wrap in a human message, as not all providers allow
+    # AI message at the last position of the input messages list
+    result["messages"][-1] = HumanMessage(
+        content=result["messages"][-1].content, name="researcher"
+    )
+    return Command(
+        update={
+            # share internal message history of research agent with other agents
+            "messages": result["messages"],
+        },
+        goto=goto,
+    )
+
+
+def chart_node(state: MessagesState) -> Command[Literal["researcher", END]]:
+    result = chart_agent.invoke(state)
+    goto = get_next_node(result["messages"][-1], "researcher")
+    # wrap in a human message, as not all providers allow
+    # AI message at the last position of the input messages list
+    result["messages"][-1] = HumanMessage(
+        content=result["messages"][-1].content, name="chart_generator"
+    )
+    return Command(
+        update={
+            # share internal message history of chart agent with other agents
+            "messages": result["messages"],
+        },
+        goto=goto,
+    )
 
 
 def tool_node(state):
@@ -65,7 +92,6 @@ def tool_node(state):
     if len(tool_input) == 1 and "__arg1" in tool_input:
         tool_input = next(iter(tool_input.values()))
     tool_name = last_message.additional_kwargs["function_call"]["name"]
-    print(f"Invocando tool {tool_name}: {tool_input}")
     action = ToolInvocation(
         tool=tool_name,
         tool_input=tool_input,
@@ -86,46 +112,6 @@ def tool_node(state):
     )
 
 
-def research_node(
-    state: MessagesState,
-) -> Command[Literal["chart_generator", END]]:
-    print("Invocando busca")
-    result = research_agent.invoke(state)
-    goto = get_next_node(result["messages"][-1], "chart_generator")
-    # wrap in a human message, as not all providers allow
-    # AI message at the last position of the input messages list
-    result["messages"][-1] = HumanMessage(
-        content=result["messages"][-1].content, name="researcher"
-    )
-    print(result)
-    return Command(
-        update={
-            # share internal message history of research agent with other agents
-            "messages": result["messages"],
-        },
-        goto=goto,
-    )
-
-
-def chart_node(state: MessagesState) -> Command[Literal["researcher", END]]:
-    print("Invocando chart")
-    result = chart_agent.invoke(state)
-    goto = get_next_node(result["messages"][-1], "researcher")
-    # wrap in a human message, as not all providers allow
-    # AI message at the last position of the input messages list
-    result["messages"][-1] = HumanMessage(
-        content=result["messages"][-1].content, name="chart_generator"
-    )
-    print(result)
-    return Command(
-        update={
-            # share internal message history of chart agent with other agents
-            "messages": result["messages"],
-        },
-        goto=goto,
-    )
-
-
 # Either agent can decide to end
 def router(state):
     # This is the router
@@ -140,7 +126,14 @@ def router(state):
     return "continue"
 
 
-def main(user_query: str, display: bool = True):
+def get_next_node(last_message: BaseMessage, goto: str):
+    if "FINAL ANSWER" in last_message.content:
+        # Any agent decided the work is done
+        return END
+    return goto
+
+
+def get_graph():
     workflow = StateGraph(MessagesState)
     # nodes
     workflow.add_node("researcher", research_node)
@@ -164,11 +157,14 @@ def main(user_query: str, display: bool = True):
         },
     )
     workflow.set_entry_point("researcher")
-
     graph = workflow.compile()
+    return graph
+
+
+def main(user_query: str, display: bool = True):
+    graph = get_graph()
     if display:
         # from IPython.display import Image, display
-
         try:
             graph.get_graph().draw_mermaid_png(
                 output_file_path="/home/churros/codes/agentes/grafo.png"
@@ -179,7 +175,6 @@ def main(user_query: str, display: bool = True):
             pass
 
     # Invocando o grafo de estados
-    print("Agora vai!")
     events = graph.stream(
         {
             "messages": [("user", user_query)],
@@ -195,7 +190,7 @@ def main(user_query: str, display: bool = True):
 if __name__ == "__main__":
     # user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
     #        Once you make the chart, save a file and finish."""
-    user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
-            Once you make the chart, save a file and finish."""
-    print(os.getcwd())
+    #user_query = """Crie um gráfico representando uma função coseno, com valores entre -1 e 1.
+    #        Quando estiver pronto, salve o arquivo e finalize."""
+    user_query = """Encontre o valor do PIB per capita do Brasil nos últimos 5 anos. Em seguida crie um gráfico apresentando o resultado."""
     main(user_query)

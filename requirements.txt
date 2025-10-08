@@ -3,8 +3,9 @@ langchain_community
 langchain_anthropic
 langchain-tavily
 langchain_experimental
-matplotlib
+langchain_openai
 langgraph
 duckduckgo-search
 ddgs
-langchain_openai
+matplotlib
+seaborn
