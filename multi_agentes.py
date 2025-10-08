@@ -26,7 +26,7 @@ llm = ChatOpenAI(
 ## Agentes
 research_agent = create_react_agent(
     llm,
-    #tools=[duckduckgo_tool],
+    # tools=[duckduckgo_tool],
     tools=[tavily_tool],
     prompt=make_system_prompt(
         "You can only do research. You are working with a chart generator colleague."
@@ -193,7 +193,7 @@ def main(user_query: str, display: bool = True):
 
 
 if __name__ == "__main__":
-    #user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
+    # user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
     #        Once you make the chart, save a file and finish."""
     user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
             Once you make the chart, save a file and finish."""

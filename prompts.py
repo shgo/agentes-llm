@@ -9,6 +9,8 @@ chart_task = """Create clear and visually appealing charts using seaborn and plo
 8. Save in the current directory (/home/churros/codes/agentes/appropriate_name.pdf) with `plt.savefig(appropriate_name.pdf)`
 
 Goal: Produce accurate, engaging, and easy-to-interpret charts."""
+
+
 ## System prompt
 def make_system_prompt(suffix: str) -> str:
     return (
@@ -20,4 +22,3 @@ def make_system_prompt(suffix: str) -> str:
         " prefix your response with FINAL ANSWER so the team knows to stop."
         f"\n{suffix}"
     )
-
