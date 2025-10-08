@@ -5,7 +5,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 from langchain_experimental.utilities import PythonREPL
 
-##tavily_tool = TavilySearch(max_results=5)
+tavily_tool = TavilySearch(max_results=5)
 duckduckgo_tool = DuckDuckGoSearchRun(max_results=3)
 
 # Warning: This executes code locally, which can be unsafe when not sandboxed

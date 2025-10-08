@@ -7,14 +7,15 @@ from langgraph.graph import StateGraph, START
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import MessagesState, END
 from langgraph.types import Command
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
-from tools import duckduckgo_tool, python_repl_tool, print_pretty
+from tools import tavily_tool, duckduckgo_tool, python_repl_tool, print_pretty
+from prompts import make_system_prompt, chart_task
 
 TOKEN = os.environ["GITHUB_TOKEN"]
 ENDPOINT = "https://models.github.ai/inference"
 MODEL = "openai/gpt-4.1"
 
+## Defino o meu llm
 llm = ChatOpenAI(
     model=MODEL,
     base_url=ENDPOINT,
@@ -22,23 +23,11 @@ llm = ChatOpenAI(
 )
 
 
-## System prompt
-def make_system_prompt(suffix: str) -> str:
-    return (
-        "You are a helpful AI assistant, collaborating with other assistants."
-        " Use the provided tools to progress towards answering the question."
-        " If you are unable to fully answer, that's OK, another assistant with different tools "
-        " will help where you left off. Execute what you can to make progress."
-        " If you or any of the other assistants have the final answer or deliverable,"
-        " prefix your response with FINAL ANSWER so the team knows to stop."
-        f"\n{suffix}"
-    )
-
-
-## Agents
+## Agentes
 research_agent = create_react_agent(
     llm,
-    tools=[duckduckgo_tool],
+    #tools=[duckduckgo_tool],
+    tools=[tavily_tool],
     prompt=make_system_prompt(
         "You can only do research. You are working with a chart generator colleague."
     ),
@@ -46,16 +35,6 @@ research_agent = create_react_agent(
 
 # Chart generator agent
 # NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION, WHICH CAN BE UNSAFE WHEN NOT SANDBOXED
-chart_task = """Create clear and visually appealing charts using seaborn and plotly. Follow these rules:
-1. Add a title, labeled axes (with units), and a legend if needed.
-2. Use `sns.set_context("notebook")` for readable text and themes like `sns.set_theme()` or `sns.set_style("whitegrid")`.
-3. Use accessible color palettes like `sns.color_palette("husl")`.
-4. Choose appropriate plots: `sns.lineplot()`, `sns.barplot()`, or `sns.heatmap()`.
-5. Annotate key points (e.g., "Peak in 2020") for clarity.
-6. Ensure the chart's width and display resolution is no wider than 1000px.
-7. Display with `plt.show()`.
-8. Save in the current directory with `plt.savefig(appropriate_name.pdf)`
-Goal: Produce accurate, engaging, and easy-to-interpret charts."""
 chart_agent = create_react_agent(
     llm,
     [python_repl_tool],
@@ -188,11 +167,13 @@ def main(user_query: str, display: bool = True):
 
     graph = workflow.compile()
     if display:
-        #from IPython.display import Image, display
+        # from IPython.display import Image, display
 
         try:
-            graph.get_graph().draw_mermaid_png(output_file_path="/home/churros/codes/agentes/grafo.png")
-            #display(Image(graph.get_graph().draw_mermaid_png()))
+            graph.get_graph().draw_mermaid_png(
+                output_file_path="/home/churros/codes/agentes/grafo.png"
+            )
+            # display(Image(graph.get_graph().draw_mermaid_png()))
         except Exception:
             # This requires some extra dependencies and is optional
             pass
@@ -212,9 +193,9 @@ def main(user_query: str, display: bool = True):
 
 
 if __name__ == "__main__":
-    user_query = (
-        "First, get Brazil's GDP over the past 5 years, then make a line chart of it. "
-        "Once you make the chart, finish."
-    )
-
+    #user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
+    #        Once you make the chart, save a file and finish."""
+    user_query = """Find the values of Brazil's GDP over the past 5 years  and make a line chart of it.
+            Once you make the chart, save a file and finish."""
+    print(os.getcwd())
     main(user_query)
